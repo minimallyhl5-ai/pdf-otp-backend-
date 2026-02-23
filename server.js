@@ -1,117 +1,55 @@
 const express = require("express");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Temporary in-memory OTP storage
-// In production you would use database
 const otpStore = {};
 
-/*
-==================================
-1️⃣ SEND OTP
-==================================
-*/
-app.post("/send-otp", (req, res) => {
-  const { phone } = req.body;
+// 🔑 PASTE YOUR API KEY HERE
+const WHATSAPP_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5MTcxNjE0OGQyZDk2MGQzZmVhZjNmMSIsIm5hbWUiOiJCWFEgPD4gTWlnaHR5IEh1bmRyZWQgVGVjaG5vbG9naWVzIFB2dCBMdGQiLCJhcHBOYW1lIjoiQWlTZW5zeSIsImNsaWVudElkIjoiNjkxNzE2MTQ4ZDJkOTYwZDNmZWFmM2VhIiwiYWN0aXZlUGxhbiI6Ik5PTkUiLCJpYXQiOjE3NjMxMjA2NjB9.8jOtIkz5c455LWioAa7WNzvjXlqCN564TzM12yQQ5Cw"; 
 
-  if (!phone) {
-    return res.status(400).json({
-      success: false,
-      message: "Phone number is required"
-    });
-  }
+app.post("/send-otp", async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ success: false, message: "Phone required" });
 
   // Generate 4-digit OTP
   const otp = Math.floor(1000 + Math.random() * 9000).toString();
-
-  // Store OTP with 5 minute expiry
-  otpStore[phone] = {
-    otp,
-    expiresAt: Date.now() + 5 * 60 * 1000
-  };
+  otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
 
   console.log(`📲 OTP for ${phone}: ${otp}`);
 
-  // 🔴 TODO:
-  // Here you can integrate WhatsApp API or SMS API
-  // For now OTP is printed in Render logs
+  try {
+    // This is a generic example. The URL and data structure depend on your provider.
+    // Replace 'https://api.yourprovider.com/send' with your actual API endpoint.
+    await axios.post("https://api.yourprovider.com/send", {
+      token: WHATSAPP_API_KEY,
+      to: phone,
+      body: `Your Hundred Learning verification code is: ${otp}`
+    });
 
-  return res.json({
-    success: true,
-    message: "OTP sent successfully"
-  });
+    res.json({ success: true, message: "OTP sent to WhatsApp" });
+  } catch (error) {
+    console.error("WhatsApp API Error:", error.response ? error.response.data : error.message);
+    // Returning success true here allows you to manually verify via Render logs if the API fails
+    res.json({ success: true, message: "OTP generated (check logs if message not received)" });
+  }
 });
 
-
-/*
-==================================
-2️⃣ VERIFY OTP
-==================================
-*/
 app.post("/verify-otp", (req, res) => {
   const { phone, otp } = req.body;
-
-  if (!phone || !otp) {
-    return res.status(400).json({
-      success: false,
-      message: "Phone and OTP required"
-    });
-  }
-
   const record = otpStore[phone];
 
-  if (!record) {
-    return res.json({
-      success: false,
-      message: "No OTP found for this number"
-    });
-  }
-
-  if (Date.now() > record.expiresAt) {
+  if (record && record.otp === otp && Date.now() < record.expiresAt) {
     delete otpStore[phone];
-    return res.json({
-      success: false,
-      message: "OTP expired"
-    });
+    return res.json({ success: true, message: "Verified" });
   }
-
-  if (record.otp !== otp) {
-    return res.json({
-      success: false,
-      message: "Invalid OTP"
-    });
-  }
-
-  // OTP correct → remove it
-  delete otpStore[phone];
-
-  return res.json({
-    success: true,
-    message: "OTP verified successfully"
-  });
+  res.json({ success: false, message: "Invalid or expired OTP" });
 });
 
+app.get("/", (req, res) => res.send("OTP Backend is running 🚀"));
 
-/*
-==================================
-3️⃣ HEALTH CHECK ROUTE
-==================================
-*/
-app.get("/", (req, res) => {
-  res.send("OTP Backend is running 🚀");
-});
-
-
-/*
-==================================
-SERVER START
-==================================
-*/
 const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

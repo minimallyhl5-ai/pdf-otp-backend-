@@ -12,9 +12,10 @@ const otpStore = {};
 // --- CONFIGURATION ---
 // NeoDove API Details
 const API_URL = 'https://backend.api-wa.co/campaign/neodove/api/v2';
+// 🔑 Best practice: Ensure this is set in Render Environment Variables
 const API_KEY = process.env.NEODOVE_API_KEY; 
 
-// Google Apps Script Web App URL
+// 📊 Google Apps Script Web App URL (the one ending in /exec)
 const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzZAObdi3Y4g_-p3D8DGEWzXWkLwzgIN6JiZmdFQql5VV8yvQECRHJKbMNeKZn7wYpF/exec';
 
 // --- ROUTE 1: SEND OTP ---
@@ -37,7 +38,7 @@ app.post('/send-otp', async (req, res) => {
 
     const payload = {
         apiKey: API_KEY, 
-        campaignName: "OTP5", 
+        campaignName: "OTP5", // Must match your LIVE NeoDove Campaign
         destination: phoneNumber,
         userName: userName || "Student",
         templateParams: [otpCode], 
@@ -54,13 +55,13 @@ app.post('/send-otp', async (req, res) => {
         await axios.post(API_URL, payload, {
             headers: { 
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${API_KEY}` // Fixes the 401 Unauthorized Error
+                "Authorization": `Bearer ${API_KEY}` // ✅ FIX: Added Bearer to resolve 401 error
             }
         });
         res.json({ success: true, message: "OTP Sent" });
     } catch (error) {
         console.error("❌ NeoDove Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, message: "API failure" });
     }
 });
 
@@ -81,7 +82,6 @@ app.post('/verify-otp', async (req, res) => {
             console.log(`📊 Lead saved to Google Sheets for ${phoneNumber}`);
         } catch (sheetError) {
             console.error("❌ Google Sheets Error:", sheetError.message);
-            // We don't block the user if only the sheet fails
         }
 
         delete otpStore[phoneNumber]; // Clear OTP after success
@@ -92,7 +92,7 @@ app.post('/verify-otp', async (req, res) => {
     res.json({ success: false, message: "Invalid or expired OTP" });
 });
 
-// Health check and Render Port binding
+// Health check for Render
 app.get('/', (req, res) => res.send("Hundred Learning OTP Backend is Live 🚀"));
 
 const PORT = process.env.PORT || 10000;

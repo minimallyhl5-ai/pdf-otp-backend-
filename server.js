@@ -6,13 +6,16 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Temporary storage for OTPs
+// Temporary storage for OTPs (Key: Phone, Value: {otp, expiresAt, userName})
 const otpStore = {}; 
 
-// NeoDove Configuration
+// --- CONFIGURATION ---
+// NeoDove API Details
 const API_URL = 'https://backend.api-wa.co/campaign/neodove/api/v2';
-// 🔑 Best practice: Use process.env.NEODOVE_API_KEY in Render Environment Variables
-const API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5MTcxNjE0OGQyZDk2MGQzZmVhZjNmMSIsIm5hbWUiOiJCWFEgPD4gTWlnaHR5IEh1bmRyZWQgVGVjaG5vbG9naWVzIFB2dCBMdGQiLCJhcHBOYW1lIjoiQWlTZW5zeSIsImNsaWVudElkIjoiNjkxNzE2MTQ4ZDJkOTYwZDNmZWFmM2VhIiwiYWN0aXZlUGxhbiI6Ik5PTkUiLCJpYXQiOjE3NjMxMjA2NjB9.8jOtIkz5c455LWioAa7WNzvjXlqCN564TzM12yQQ5Cw'; 
+const API_KEY = process.env.NEODOVE_API_KEY; 
+
+// Google Apps Script Web App URL
+const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzZAObdi3Y4g_-p3D8DGEWzXWkLwzgIN6JiZmdFQql5VV8yvQECRHJKbMNeKZn7wYpF/exec';
 
 // --- ROUTE 1: SEND OTP ---
 app.post('/send-otp', async (req, res) => {
@@ -20,54 +23,68 @@ app.post('/send-otp', async (req, res) => {
     
     if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
 
-    // Generate 4-digit OTP
+    // Generate a 4-digit OTP
     const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
     
-    // Store OTP for 5 minutes
+    // Store OTP and Name for 5 minutes
     otpStore[phoneNumber] = { 
         otp: otpCode, 
+        userName: userName || "Student",
         expiresAt: Date.now() + 5 * 60 * 1000 
     };
 
     console.log(`🚀 Sending OTP ${otpCode} to ${phoneNumber}`);
 
     const payload = {
-        apiKey: API_KEY, // NeoDove uses apiKey in the body for v2
-        campaignName: "OTP5", // Must match your LIVE NeoDove API Campaign
+        apiKey: API_KEY, 
+        campaignName: "OTP5", 
         destination: phoneNumber,
         userName: userName || "Student",
-        templateParams: [otpCode], // Replaces {{1}} in your approved template
-        source: "Wix_Syllabus_Form",
+        templateParams: [otpCode], 
+        source: "Wix_Website",
         buttons: [{
             type: "button",
             sub_type: "url",
             index: 0,
-            parameters: [{ type: "text", text: otpCode }] // For 'Copy Code' button
+            parameters: [{ type: "text", text: otpCode }] 
         }]
     };
 
     try {
-        const response = await axios.post(API_URL, payload, {
-            headers: { "Content-Type": "application/json" }
+        await axios.post(API_URL, payload, {
+            headers: { 
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${API_KEY}` // Fixes the 401 Unauthorized Error
+            }
         });
-        
-        console.log("✅ NeoDove Response:", response.data);
         res.json({ success: true, message: "OTP Sent" });
     } catch (error) {
-        // Detailed logging to debug the 401 error
         console.error("❌ NeoDove Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ success: false, message: "API failure" });
+        res.status(500).json({ success: false });
     }
 });
 
-// --- ROUTE 2: VERIFY OTP ---
-app.post('/verify-otp', (req, res) => {
+// --- ROUTE 2: VERIFY OTP & SAVE TO GOOGLE SHEETS ---
+app.post('/verify-otp', async (req, res) => {
     const { phoneNumber, otpCode } = req.body;
     const record = otpStore[phoneNumber];
 
+    // Check if OTP is valid and not expired
     if (record && record.otp === String(otpCode) && Date.now() < record.expiresAt) {
-        delete otpStore[phoneNumber]; // Success, clear the code
-        console.log(`✅ ${phoneNumber} verified!`);
+        
+        // 🟢 SUCCESS: SAVE TO GOOGLE SHEETS
+        try {
+            await axios.post(GOOGLE_SHEET_URL, {
+                userName: record.userName,
+                phoneNumber: phoneNumber
+            });
+            console.log(`📊 Lead saved to Google Sheets for ${phoneNumber}`);
+        } catch (sheetError) {
+            console.error("❌ Google Sheets Error:", sheetError.message);
+            // We don't block the user if only the sheet fails
+        }
+
+        delete otpStore[phoneNumber]; // Clear OTP after success
         return res.json({ success: true });
     }
     
@@ -75,8 +92,8 @@ app.post('/verify-otp', (req, res) => {
     res.json({ success: false, message: "Invalid or expired OTP" });
 });
 
-// Health check for Render
-app.get('/', (req, res) => res.send("OTP Backend is running 🚀"));
+// Health check and Render Port binding
+app.get('/', (req, res) => res.send("Hundred Learning OTP Backend is Live 🚀"));
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`✅ Backend live on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));

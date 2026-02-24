@@ -6,45 +6,64 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Temporary storage for OTPs (Key: Phone, Value: OTP)
+const otpStore = {}; 
+
 const API_URL = 'https://backend.api-wa.co/campaign/neodove/api/v2';
-// 🔐 Securely pull from Render Environment Variables
 const API_KEY = process.env.NEODOVE_API_KEY; 
 
+// --- ROUTE 1: SEND OTP ---
 app.post('/send-otp', async (req, res) => {
-    // 1. Force values to Strings to prevent API rejection
-    const phoneNumber = String(req.body.phoneNumber);
-    const userName = req.body.userName || "Student";
-    const otpCode = String(req.body.otpCode);
+    const { phoneNumber, userName } = req.body;
+    
+    // Generate a fresh 4-digit code
+    const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    // Save it in memory for 5 minutes
+    otpStore[phoneNumber] = { 
+        otp: otpCode, 
+        expiresAt: Date.now() + 5 * 60 * 1000 
+    };
 
-    console.log(`🚀 Triggering OTP ${otpCode} for ${phoneNumber}`);
+    console.log(`🚀 Sending OTP ${otpCode} to ${phoneNumber}`);
 
     const payload = {
         apiKey: API_KEY,
         campaignName: "OTP5",
-        destination: phoneNumber, 
+        destination: phoneNumber,
         userName: userName,
-        templateParams: [otpCode], // {{1}}
-        source: "Website_Entrance_Form",
-        buttons: [
-            {
-                type: "button",
-                sub_type: "url",
-                index: 0,
-                parameters: [{ type: "text", text: otpCode }]
-            }
-        ]
+        templateParams: [otpCode], // Replaces {{1}}
+        source: "Wix_Form",
+        buttons: [{
+            type: "button", sub_type: "url", index: 0,
+            parameters: [{ type: "text", text: otpCode }]
+        }]
     };
 
     try {
-        const response = await axios.post(API_URL, payload);
-        res.json({ success: true, message: "OTP Sent", data: response.data });
+        await axios.post(API_URL, payload);
+        res.json({ success: true, message: "OTP Sent" });
     } catch (error) {
-        // Log the specific error from NeoDove to help you debug
-        console.error("NeoDove API Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ success: false, message: "WhatsApp API failed" });
+        console.error("NeoDove Error:", error.message);
+        res.status(500).json({ success: false });
     }
 });
 
-// 🌍 Use dynamic port for Render
+// --- ROUTE 2: VERIFY OTP (NEW!) ---
+app.post('/verify-otp', (req, res) => {
+    const { phoneNumber, otpCode } = req.body;
+    const record = otpStore[phoneNumber];
+
+    // Check if OTP exists, matches, and isn't expired
+    if (record && record.otp === String(otpCode) && Date.now() < record.expiresAt) {
+        delete otpStore[phoneNumber]; // Clear OTP after success
+        console.log(`✅ ${phoneNumber} verified successfully!`);
+        return res.json({ success: true });
+    }
+    
+    console.log(`❌ Verification failed for ${phoneNumber}`);
+    res.json({ success: false, message: "Invalid or expired OTP" });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Backend running on port ${PORT}`));
+app.listen(PORT, () => console.log(`✅ Backend live on port ${PORT}`));

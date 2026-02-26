@@ -1,94 +1,200 @@
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+const multer = require("multer");
+const fs = require("fs");
+
 const app = express();
 
+// ======================
+// MIDDLEWARE
+// ======================
 app.use(express.json());
-app.use(cors());
 
-// Temporary storage for OTPs
-const otpStore = {}; 
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"]
+}));
 
-// --- CONFIGURATION ---
-const API_URL = 'https://backend.api-wa.co/campaign/neodove/api/v2';
-const API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5MTcxNjE0OGQyZDk2MGQzZmVhZjNmMSIsIm5hbWUiOiJCWFEgPD4gTWlnaHR5IEh1bmRyZWQgVGVjaG5vbG9naWVzIFB2dCBMdGQiLCJhcHBOYW1lIjoiQWlTZW5zeSIsImNsaWVudElkIjoiNjkxNzE2MTQ4ZDJkOTYwZDNmZWFmM2VhIiwiYWN0aXZlUGxhbiI6Ik5PTkUiLCJpYXQiOjE3NjMxMjA2NjB9.8jOtIkz5c455LWioAa7WNzvjXlqCN564TzM12yQQ5Cw'; 
+// ======================
+// MULTER SETUP
+// ======================
+const upload = multer({ dest: "uploads/" });
 
-// 📊 Google Apps Script Web App URL
-const GOOGLE_SHEET_URL = 'https://script.google.com/macros/s/AKfycbzZAObdi3Y4g_-p3D8DGEWzXWkLwzgIN6JiZmdFQql5VV8yvQECRHJKbMNeKZn7wYpF/exec';
+// ======================
+// ENV VARIABLES
+// ======================
+const API_KEY = process.env.API_KEY;
+const API_URL = process.env.API_URL;
+const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL;
 
-// --- ROUTE 1: SEND OTP ---
-app.post('/send-otp', async (req, res) => {
-    const { phoneNumber, userName } = req.body;
-    
-    if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
+// Check environment variables on startup
+if (!API_KEY || !API_URL || !GOOGLE_SHEET_URL) {
+  console.log("⚠️ Missing one or more environment variables!");
+} else {
+  console.log("✅ Environment variables loaded successfully");
+}
 
-    const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
-    
-    // Store OTP and Name for 5 minutes
-    otpStore[phoneNumber] = { 
-        otp: otpCode, 
-        userName: userName || "Student",
-        expiresAt: Date.now() + 5 * 60 * 1000 
-    };
+// ======================
+// TEMP OTP STORE
+// ======================
+const otpStore = {};
 
-    console.log(`🚀 Sending OTP ${otpCode} to ${phoneNumber}`);
+// ======================
+// SEND OTP ROUTE
+// ======================
+app.post("/send-otp", async (req, res) => {
 
-    const payload = {
+  const { phoneNumber, userName } = req.body;
+
+  console.log("📩 /send-otp HIT:", phoneNumber);
+
+  if (!phoneNumber) {
+    console.log("❌ Phone missing");
+    return res.status(400).json({ success: false, message: "Phone required" });
+  }
+
+  const otpCode = Math.floor(1000 + Math.random() * 9000).toString();
+
+  otpStore[phoneNumber] = {
+    otp: otpCode,
+    userName: userName || "Student",
+    expiresAt: Date.now() + 5 * 60 * 1000
+  };
+
+  try {
+    const response = await axios.post(
+      API_URL,
+      {
         apiKey: API_KEY,
-        campaignName: "OTP5", 
+        campaignName: "OTP5",
         destination: phoneNumber,
-        userName: userName || "Student",
-        templateParams: [otpCode], 
-        source: "Wix_Syllabus_Form",
-        buttons: [{
-            type: "button",
-            sub_type: "url",
-            index: 0,
-            parameters: [{ type: "text", text: otpCode }] 
-        }]
-    };
+        userName: userName,
+        templateParams: [otpCode]
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`
+        }
+      }
+    );
+
+    console.log("✅ OTP sent successfully to:", phoneNumber);
+    res.json({ success: true });
+
+  } catch (error) {
+    console.error("❌ OTP Error:", error.response?.data || error.message);
+    res.status(500).json({ success: false });
+  }
+});
+
+// ======================
+// VERIFY OTP ROUTE
+// ======================
+app.post("/verify-otp", (req, res) => {
+
+  const { phoneNumber, otpCode } = req.body;
+
+  console.log("🔎 /verify-otp HIT:", phoneNumber);
+
+  const record = otpStore[phoneNumber];
+
+  if (
+    record &&
+    record.otp === String(otpCode) &&
+    Date.now() < record.expiresAt
+  ) {
+    console.log("✅ OTP verified:", phoneNumber);
+    return res.json({ success: true });
+  }
+
+  console.log("❌ OTP invalid:", phoneNumber);
+  res.json({ success: false, message: "Invalid or expired OTP" });
+});
+
+// ======================
+// SUBMIT FORM ROUTE
+// ======================
+app.post(
+  "/submit-form",
+  upload.fields([
+    { name: "mark10" },
+    { name: "mark11" },
+    { name: "mark12" },
+    { name: "idCard" }
+  ]),
+  async (req, res) => {
+
+    console.log("📤 /submit-form HIT");
 
     try {
-        const response = await axios.post(API_URL, payload, {
-            headers: { 
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${API_KEY}` // Fixes 401 errors
-            }
+      const { name, phone, parentProfession } = req.body;
+
+      if (!req.files["mark10"] || !req.files["idCard"]) {
+        console.log("❌ Required files missing");
+        return res.status(400).json({
+          success: false,
+          message: "Required files missing"
         });
-        res.json({ success: true, message: "OTP Sent" });
+      }
+
+      function toBase64(filePath, mimeType) {
+        const file = fs.readFileSync(filePath);
+        return `data:${mimeType};base64,` + file.toString("base64");
+      }
+
+      const idCardFile = req.files["idCard"][0];
+      const mark10File = req.files["mark10"][0];
+
+      const idCardBase64 = toBase64(idCardFile.path, idCardFile.mimetype);
+      const mark10Base64 = toBase64(mark10File.path, mark10File.mimetype);
+
+      let mark11Base64 = "";
+      let mark12Base64 = "";
+
+      if (req.files["mark11"]) {
+        const file = req.files["mark11"][0];
+        mark11Base64 = toBase64(file.path, file.mimetype);
+      }
+
+      if (req.files["mark12"]) {
+        const file = req.files["mark12"][0];
+        mark12Base64 = toBase64(file.path, file.mimetype);
+      }
+
+      console.log("📊 Sending data to Apps Script...");
+
+      await axios.post(GOOGLE_SHEET_URL, {
+        name,
+        phone,
+        parentProfession,
+        idCard: idCardBase64,
+        mark10: mark10Base64,
+        mark11: mark11Base64,
+        mark12: mark12Base64
+      });
+
+      console.log("✅ Data saved to Google Sheets");
+
+      res.json({ success: true });
+
     } catch (error) {
-        console.error("❌ NeoDove Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ success: false });
+      console.error("❌ Submit Error:", error.response?.data || error.message);
+      res.status(500).json({ success: false });
     }
+  }
+);
+
+// ======================
+// HEALTH CHECK
+// ======================
+app.get("/", (req, res) => {
+  res.send("Marksheet Submission Backend Running 🚀");
 });
 
-// --- ROUTE 2: VERIFY OTP & SAVE DATA ---
-app.post('/verify-otp', async (req, res) => {
-    const { phoneNumber, otpCode } = req.body;
-    const record = otpStore[phoneNumber];
-
-    if (record && record.otp === String(otpCode) && Date.now() < record.expiresAt) {
-        
-        // 🟢 SAVE TO GOOGLE SHEETS UPON SUCCESS
-        try {
-            await axios.post(GOOGLE_SHEET_URL, {
-                userName: record.userName,
-                phoneNumber: phoneNumber
-            });
-            console.log(`📊 Lead saved to Google Sheets for ${phoneNumber}`);
-        } catch (sheetError) {
-            console.error("❌ Google Sheets Error:", sheetError.message);
-        }
-
-        delete otpStore[phoneNumber]; 
-        console.log(`✅ ${phoneNumber} verified!`);
-        return res.json({ success: true });
-    }
-    
-    res.json({ success: false, message: "Invalid or expired OTP" });
-});
-
-app.get('/', (req, res) => res.send("OTP Backend is running 🚀"));
-
+// ======================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`✅ Backend live on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log("🚀 Server running on port " + PORT);
+});
